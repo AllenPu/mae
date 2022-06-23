@@ -36,6 +36,8 @@ Run our interactive visualization demo using [Colab notebook](https://colab.rese
 
 ### Fine-tuning with pre-trained checkpoints
 
+## This is a revision of the MAE from Facebook
+
 The following table provides the pre-trained checkpoints used in the paper, converted from TF/TPU to PT/GPU:
 <table><tbody>
 <!-- START TABLE -->
