@@ -48,6 +48,10 @@ class MaskedAutoencoderViT(nn.Module):
 
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
 
+        ##
+        self.mask_token_comple = nn.Parameter(torch.ones(1, 1, decoder_embed_dim))
+        ##
+
         self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
 
         self.decoder_blocks = nn.ModuleList([
@@ -196,7 +200,7 @@ class MaskedAutoencoderViT(nn.Module):
 
         return x, mask,  ids_restore, x_comple, mask_comple
 
-    def forward_decoder(self, x, ids_restore):
+    def forward_decoder(self, x, ids_restore, x_comple):
         # embed tokens
         x = self.decoder_embed(x)
 
@@ -220,7 +224,27 @@ class MaskedAutoencoderViT(nn.Module):
         # remove cls token
         x = x[:, 1:, :]
 
-        return x
+        # we do the same reverse based on the same ids_restore index
+        mask_tokens_comple = self.mask_token_comple.repeat(x.shape[0], ids_restore.shape[1] + 1 - x.shape[1], 1)
+        # remove cls
+        x_comple_ = torch.cat([x_comple[:, 1:, :], mask_tokens_comple], dim=1)
+        # unshuffle
+        x_comple_ = torch.gather(x_comple_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_comple.shape[2]))
+        # append the cls
+        x_comle = torch.cat([x[:, :1, :], x_comple_], dim=1)
+        # add pos
+        x_comple = x_comple + self.decoder_pos_embed
+        # feed into decoder blocks
+        for blk_c in self.decoder_blocks:
+            x_comple = blk_c(x_comple)
+        x_comple = self.decoder_norm(x_comple)
+        # predict the x
+        x_comple = self.decoder_pred(x_comple)
+        # remove cls
+        x_comple = x_comple[:, 1:, :]
+
+        # x : first random 50%, x_comple : left 50%
+        return x, x_comple
 
     def forward_loss(self, imgs, pred, mask):
         """
@@ -241,8 +265,8 @@ class MaskedAutoencoderViT(nn.Module):
         return loss
 
     def forward(self, imgs, mask_ratio=0.75):
-        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
-        pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
+        latent, mask, ids_restore, latent_comple, mask_commple = self.forward_encoder(imgs, mask_ratio)
+        pred, pred_comple = self.forward_decoder(latent, ids_restore, latent_comple)  # [N, L, p*p*3]
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
 
