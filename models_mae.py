@@ -51,7 +51,7 @@ class MaskedAutoencoderViT(nn.Module):
         ##
         self.ids_shuffle = []
         self.len_keep = 0
-        # added
+        # add a loss for the cosine similarity
         self.cossim = torch.nn.CosineSimilarity()
         ##
 
