@@ -231,7 +231,7 @@ class MaskedAutoencoderViT(nn.Module):
         # unshuffle
         x_comple_ = torch.gather(x_comple_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_comple.shape[2]))
         # append the cls
-        x_comle = torch.cat([x[:, :1, :], x_comple_], dim=1)
+        x_comple = torch.cat([x[:, :1, :], x_comple_], dim=1)
         # add pos
         x_comple = x_comple + self.decoder_pos_embed
         # feed into decoder blocks
