@@ -50,6 +50,8 @@ class MaskedAutoencoderViT(nn.Module):
 
         ##
         self.mask_token_comple = nn.Parameter(torch.ones(1, 1, decoder_embed_dim))
+        # added
+        self.cossim = torch.nn.CosineSimilarity()
         ##
 
         self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
@@ -225,10 +227,10 @@ class MaskedAutoencoderViT(nn.Module):
         x = x[:, 1:, :]
 
         # we do the same reverse based on the same ids_restore index
-        mask_tokens_comple = self.mask_token_comple.repeat(x.shape[0], ids_restore.shape[1] + 1 - x.shape[1], 1)
+        mask_tokens_comple = self.mask_token_comple.repeat(x_comple.shape[0], ids_restore.shape[1] + 1 - x_comple.shape[1], 1)
         # remove cls
         x_comple_ = torch.cat([x_comple[:, 1:, :], mask_tokens_comple], dim=1)
-        # unshuffle
+        # unshuffle : this step tries to recover the mask pateches with the orginal with the same sequence
         x_comple_ = torch.gather(x_comple_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_comple.shape[2]))
         # append the cls
         x_comple = torch.cat([x[:, :1, :], x_comple_], dim=1)
@@ -243,10 +245,12 @@ class MaskedAutoencoderViT(nn.Module):
         # remove cls
         x_comple = x_comple[:, 1:, :]
 
+        # with the same step, we have the recover
+
         # x : first random 50%, x_comple : left 50%
         return x, x_comple
 
-    def forward_loss(self, imgs, pred, mask):
+    def forward_loss(self, imgs, pred, mask, pred_comple, mask_comple):
         """
         imgs: [N, 3, H, W]
         pred: [N, L, p*p*3]
@@ -262,12 +266,22 @@ class MaskedAutoencoderViT(nn.Module):
         loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
 
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
-        return loss
+
+
+        # add the left 50% patch loss
+        loss_comple = (pred_comple - target) ** 2
+        loss_comple = loss.mean(dim = -1)
+        loss_comple = (loss_comple * mask_comple).sum() / mask_comple.sum()
+        #
+        total_loss = loss + loss_comple
+
+        return total_loss
 
     def forward(self, imgs, mask_ratio=0.75):
-        latent, mask, ids_restore, latent_comple, mask_commple = self.forward_encoder(imgs, mask_ratio)
+        latent, mask, ids_restore, latent_comple, mask_comple = self.forward_encoder(imgs, mask_ratio)
         pred, pred_comple = self.forward_decoder(latent, ids_restore, latent_comple)  # [N, L, p*p*3]
-        loss = self.forward_loss(imgs, pred, mask)
+        # add loss
+        loss = self.forward_loss(imgs, pred, mask,  pred_comple, mask_comple) + self.cossim(latent, latent_comple)
         return loss, pred, mask
 
 
