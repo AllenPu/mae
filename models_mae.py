@@ -49,6 +49,7 @@ class MaskedAutoencoderViT(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
 
         ##
+        # here is the added self attributes
         self.ids_shuffle = []
         self.len_keep = 0
         # add a loss for the cosine similarity
