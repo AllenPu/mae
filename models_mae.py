@@ -49,7 +49,8 @@ class MaskedAutoencoderViT(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
 
         ##
-        self.mask_token_comple = nn.Parameter(torch.ones(1, 1, decoder_embed_dim))
+        self.ids_shuffle = []
+        self.len_keep = 0
         # added
         self.cossim = torch.nn.CosineSimilarity()
         ##
@@ -140,6 +141,9 @@ class MaskedAutoencoderViT(nn.Module):
         # sort noise for each sample
         ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
         ids_restore = torch.argsort(ids_shuffle, dim=1)
+        #
+        self.ids_shuffle = ids_shuffle
+        self.len_keep = len_keep
 
         # keep the first subset
         ids_keep = ids_shuffle[:, :len_keep]
@@ -227,9 +231,9 @@ class MaskedAutoencoderViT(nn.Module):
         x = x[:, 1:, :]
 
         # we do the same reverse based on the same ids_restore index
-        mask_tokens_comple = self.mask_token_comple.repeat(x_comple.shape[0], ids_restore.shape[1] + 1 - x_comple.shape[1], 1)
-        # remove cls
-        x_comple_ = torch.cat([x_comple[:, 1:, :], mask_tokens_comple], dim=1)
+        mask_tokens_comple = self.mask_token.repeat(x_comple.shape[0], ids_restore.shape[1] + 1 - x_comple.shape[1], 1)
+        # remove cls, remember to shift the x up-side down
+        x_comple_ = torch.cat([mask_tokens_comple, x_comple[:, 1:, :]], dim=1)
         # unshuffle : this step tries to recover the mask pateches with the orginal with the same sequence
         x_comple_ = torch.gather(x_comple_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_comple.shape[2]))
         # append the cls
@@ -246,11 +250,28 @@ class MaskedAutoencoderViT(nn.Module):
         x_comple = x_comple[:, 1:, :]
 
         # with the same step, we have the recover
-
+        # reconstruct the masked img
+        N, L, D = x.shape
+        # the first masked part of img in first 50%
+        first_mask = self.ids_shuffle[:, self.len_keep:]
+        # the second masked part of img in left 50%
+        second_mask = self.ids_shuffle[:, :self.len_keep]
+        # gather the decoder predicted first 50%
+        x_first_mask = torch.gather(x, \
+                                    dim=1, index=first_mask.unsqueeze(-1).repeat(1, 1, D))
+        # gather the decoder predcited left 50%
+        x_second_mask = torch.gather(x_comple, \
+                                     dim=1, index=second_mask.unsqueeze(-1).repeat(1, 1, D))
+        # since the first decoder 50% is the masked part of first and vice verse 
+        # we need to shift the two gather results so  we can use the ids_resotre
+        x_unfiy = torch.cat([x_second_mask, x_first_mask], dim = 1)
+        #
+        x_restore = torch.gather(
+            x_unfiy, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_comple.shape[2]), dim=1)
         # x : first random 50%, x_comple : left 50%
-        return x, x_comple
+        return x, x_comple, x_restore
 
-    def forward_loss(self, imgs, pred, mask, pred_comple, mask_comple):
+    def forward_loss(self, imgs, pred, mask, pred_comple, mask_comple, pred_unify):
         """
         imgs: [N, 3, H, W]
         pred: [N, L, p*p*3]
@@ -273,15 +294,23 @@ class MaskedAutoencoderViT(nn.Module):
         loss_comple = loss.mean(dim = -1)
         loss_comple = (loss_comple * mask_comple).sum() / mask_comple.sum()
         #
-        total_loss = loss + loss_comple
+        # compute the whole reconstruction loss
+        loss_unify = (pred_unify - target) ** 2
+        loss_unify = loss.mean(dim=-1)
+        N, L, _ = imgs.shape
+        mask_unify = torch.ones([N, L])
+        loss_unify = (loss_unify * mask_unify).sum() / mask_unify.sum()
+
+        total_loss = loss + loss_comple + loss_unify
 
         return total_loss
 
     def forward(self, imgs, mask_ratio=0.75):
         latent, mask, ids_restore, latent_comple, mask_comple = self.forward_encoder(imgs, mask_ratio)
-        pred, pred_comple = self.forward_decoder(latent, ids_restore, latent_comple)  # [N, L, p*p*3]
+        pred, pred_comple, pred_unify = self.forward_decoder(latent, ids_restore, latent_comple)  # [N, L, p*p*3]
+
         # add loss
-        loss = self.forward_loss(imgs, pred, mask,  pred_comple, mask_comple) + self.cossim(latent, latent_comple)
+        loss = self.forward_loss(imgs, pred, mask,  pred_comple, mask_comple, pred_unify) + self.cossim(latent, latent_comple)
         return loss, pred, mask
 
 
