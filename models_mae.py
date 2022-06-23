@@ -170,10 +170,11 @@ class MaskedAutoencoderViT(nn.Module):
         x = x + self.pos_embed[:, 1:, :]
 
         # masking: length -> length * mask_ratio
-        x, mask, ids_restore = self.random_masking(x, mask_ratio)
+        x, mask, ids_restore, x_comple, mask_comple = self.random_masking(x, mask_ratio)
 
         # append cls token
         cls_token = self.cls_token + self.pos_embed[:, :1, :]
+        #
         cls_tokens = cls_token.expand(x.shape[0], -1, -1)
         x = torch.cat((cls_tokens, x), dim=1)
 
@@ -182,7 +183,18 @@ class MaskedAutoencoderViT(nn.Module):
             x = blk(x)
         x = self.norm(x)
 
-        return x, mask, ids_restore
+        #####
+        # forward the next complementary 50%
+        # add cls
+        cls_tokens_comple = cls_token.expand(x_comple.shape[0], -1, -1)
+        #
+        x_comple= torch.cat((cls_tokens_comple, x), dim=1)
+        # forward for the complementary x
+        for blk_comple in self.blocks:
+            x_comple = blk_comple(x_comple)
+        x_comple = self.norm(x_comple)
+
+        return x, mask,  ids_restore, x_comple, mask_comple
 
     def forward_decoder(self, x, ids_restore):
         # embed tokens
