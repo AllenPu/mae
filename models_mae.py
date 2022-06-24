@@ -301,7 +301,7 @@ class MaskedAutoencoderViT(nn.Module):
         loss_unify = (pred_unify - target) ** 2
         loss_unify = loss.mean(dim=-1)
         N, L, _ = imgs.shape
-        mask_unify = torch.ones([N, L])
+        mask_unify = torch.ones([N, L], device = pred_unify.device)
         loss_unify = (loss_unify * mask_unify).sum() / mask_unify.sum()
 
         total_loss = loss + loss_comple + loss_unify
