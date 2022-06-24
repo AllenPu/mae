@@ -13,6 +13,7 @@ from functools import partial
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from timm.models.vision_transformer import PatchEmbed, Block
 
@@ -175,10 +176,10 @@ class MaskedAutoencoderViT(nn.Module):
         #       complementary 50% random mask, complementary 50% mask
         return x_masked, mask, ids_restore, x_masked_comple, mask_comple
 
-    def forward_encoder(self, x, mask_ratio):
+    def forward_encoder(self, x, mask_ratio):       
         # embed patches
         x = self.patch_embed(x)
-
+        
         # add pos embed w/o cls token
         x = x + self.pos_embed[:, 1:, :]
 
@@ -206,6 +207,7 @@ class MaskedAutoencoderViT(nn.Module):
         for blk_comple in self.blocks:
             x_comple = blk_comple(x_comple)
         x_comple = self.norm(x_comple)
+
 
         return x, mask,  ids_restore, x_comple, mask_comple
 
@@ -271,7 +273,7 @@ class MaskedAutoencoderViT(nn.Module):
         #
         x_restore = torch.gather(
             x_unfiy, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_comple.shape[2]), dim=1)
-        # x : first random 50%, x_comple : left 50%
+        # x : first random 50%, x_comple : left 50% , x_restore : the total concated recovered img
         return x, x_comple, x_restore
 
     def forward_loss(self, imgs, pred, mask, pred_comple, mask_comple, pred_unify):
@@ -311,6 +313,8 @@ class MaskedAutoencoderViT(nn.Module):
     def forward(self, imgs, mask_ratio=0.75):
         latent, mask, ids_restore, latent_comple, mask_comple = self.forward_encoder(imgs, mask_ratio)
         pred, pred_comple, pred_unify = self.forward_decoder(latent, ids_restore, latent_comple)  # [N, L, p*p*3]
+        #kl_mask = F.kl_div(latent.softmax(dim=-1).log(),
+        #              latent_comple.softmax(dim=-1), reduction='sum')
         # add loss
         loss = self.forward_loss(imgs, pred, mask,  pred_comple, mask_comple, pred_unify) + self.cossim(latent, latent_comple)
         return loss, pred, mask
